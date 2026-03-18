@@ -7,10 +7,12 @@ import "C"
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -152,10 +154,49 @@ func sendReaction(
 	time.Sleep(1 * time.Second)
 }
 
+// raw
+type CommonReactType struct {
+	Type string `json:"@type"`
+}
+
+type CommonReaction struct {
+	Type   CommonReactType `json:"type"`
+	ForVIP bool            `json:"needs_premium"`
+}
+
+type CommonReactions struct {
+	Top     []CommonReaction `json:"top_reactions"`
+	Recent  []CommonReaction `json:"recent_reactions"`
+	Popular []CommonReaction `json:"popular_reactions"`
+}
+
+type ReactionsResp struct {
+	Resp CommonReactions
+	Req  []byte
+}
+
+// formated
+type EmojiReactType struct {
+	Emoji string `json:"emoji"`
+}
+
+type EmojiReaction struct {
+	Type EmojiReactType `json:"type"`
+}
+
+type EmojiReactions struct {
+	Top     []EmojiReaction `json:"top_reactions"`
+	Recent  []EmojiReaction `json:"recent_reactions"`
+	Popular []EmojiReaction `json:"popular_reactions"`
+}
+
 func reactMessages(
 	clientId int,
 	callback func(chatId int64),
 	messages chan []Message,
+	reactChan chan ReactionsResp,
+	done chan bool,
+	hostel *Hostel,
 ) {
 	var chatIdStr string
 	fmt.Print("Введите id чата у которого хотите поставить реакции: ")
@@ -204,34 +245,109 @@ func reactMessages(
 		),
 	)
 	msgs := <-messages
+	// reactResp := <-reactChan
+	// var rawReactions []CommonReaction
+	// var (
+	// 	emojiReaction  EmojiReactions
+	// 	emojiReactions []EmojiReaction
+	// )
+	// rawReactions = append(reactResp.Resp.Top, reactResp.Resp.Popular...)
+	// rawReactions = append(rawReactions, reactResp.Resp.Recent...)
+	// for i, r := range rawReactions {
+	// 	if !r.ForVIP && r.Type.Type == "reactionTypeEmoji" {
+	// 		if len(emojiReactions) < 1 {
+	// 			json.Unmarshal(reactResp.Req, &emojiReaction)
+	// 			emojiReactions = append(emojiReaction.Top, emojiReaction.Popular...)
+	// 			emojiReactions = append(emojiReactions, emojiReaction.Recent...)
+	// 		}
+	// 		reactions = append(reactions, emojiReactions[i].Type.Emoji)
+	// 	}
+	// }
+	// updateReact(reactions)
 	for _, msg := range msgs {
-		var emoji string = "👍"
-		sendReaction(clientId, chatId, msg.Id, emoji, "reactions")
+		var emoji string
+		if len(hostel.reactions) < 1 {
+			emoji = "👍"
+		} else {
+			emoji = hostel.reactions[rand.Intn(len(hostel.reactions))]
+		}
+		hostel.checkReacted(msg.ChatId)
+		hostel.mutex.Lock()
+		if !hostel.reactedMsgs[msg.ChatId] {
+			sendReaction(clientId, chatId, msg.Id, emoji, "reactions")
+			hostel.reactedMsgs[msg.ChatId] = true
+		}
+		hostel.mutex.Unlock()
 	}
+	done <- true
 }
 
 func reactNewMessage(
 	clientId int,
 	msgChan chan LastMsgResp,
+	hostel *Hostel,
 ) {
-	var emoji string = "👍"
+	reactions := hostel.reactions
+	var emoji string
+	if len(reactions) < 1 {
+		emoji = "👍"
+	} else {
+		emoji = reactions[rand.Intn(len(reactions))]
+	}
 	for {
 		message := <-msgChan
-		sendReaction(clientId, message.ChatId, message.LastMsg.Id, emoji, "reaction")
+		hostel.mutex.Lock()
+		if !hostel.reactedMsgs[message.ChatId] {
+			sendReaction(clientId, message.ChatId, message.LastMsg.Id, emoji, "reaction")
+			hostel.reactedMsgs[message.ChatId] = true
+		}
+		hostel.mutex.Unlock()
 	}
 }
 
+type Hostel struct {
+	mutex        sync.Mutex
+	reactions    []string
+	reactedMsgs  map[int64]bool
+	doneChan     chan bool
+	messages     chan []Message
+	newMessage   chan LastMsgResp
+	reactionChan chan ReactionsResp
+}
+
+func registerHostel() *Hostel {
+	return &Hostel{
+		mutex:       sync.Mutex{},
+		reactions:   []string{},
+		reactedMsgs: make(map[int64]bool),
+	}
+}
+
+func (h *Hostel) checkReacted(chatId int64) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	if _, ok := h.reactedMsgs[chatId]; !ok {
+		h.reactedMsgs[chatId] = false
+	}
+}
+
+func (h *Hostel) editReactions(reactions []string) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+	h.reactions = reactions
+}
+
 func main() {
-	var (
-		authState    string = "authorizationStateWaitTdlibParameters"
-		selectedChat int64
-	)
-	isRunning := false
+	hostel := registerHostel()
+	doneChan := make(chan bool)
 	messages := make(chan []Message)
 	newMessage := make(chan LastMsgResp)
-	var clientId = C.td_create_client_id()
-	var timeout = C.double(1.0)
-	var result = C.td_execute(
+	reactionChan := make(chan ReactionsResp)
+	authState := "authorizationStateWaitTdlibParameters"
+	var selectedChat int64 = 0
+	clientId := C.td_create_client_id()
+	timeout := C.double(1.0)
+	result := C.td_execute(
 		C.CString(
 			`{
 				"@type": "setLogVerbosityLevel",
@@ -318,35 +434,23 @@ func main() {
 					case "reactions":
 						fmt.Println("Реакция успешно отправлена!")
 					case "reaction":
-						fmt.Println("Реакция успешно отправлена! (введите new для выбора чата)")
-						if !isRunning {
-							go func(callback func(data bool)) {
-								callback(true)
-								var choice string
-								fmt.Scan(&choice)
-								choice = strings.TrimSpace(choice)
-								switch choice {
-								case "new":
-									go reactMessages(
-										int(clientId),
-										func(chatId int64) {
-											selectedChat = chatId
-										},
-										messages,
-									)
-								case "stop":
-									fmt.Println("Программа завершила работу")
-									os.Exit(0)
-								}
-								callback(false)
-							}(func(data bool) {
-								isRunning = data
-							})
-						}
+						fmt.Println("Отправлена реакция на новое сообщение!")
 					}
 				} else {
 				}
 			}
+
+			// if resData.Type == "availableReactions" {
+			// 	var reactResp CommonReactions
+			// 	if err := json.Unmarshal(res, &reactResp); err != nil {
+			// 		fmt.Println("Ошибка преобразования reactions: ", err)
+			// 		break
+			// 	}
+			// 	reactionChan <- ReactionsResp{
+			// 		Resp: reactResp,
+			// 		Req:  res,
+			// 	}
+			// }
 
 			if resData.Type == "messages" {
 				var msgsResp MsgsResp
@@ -354,6 +458,21 @@ func main() {
 					fmt.Println("Ошибка преобразования json: ", err)
 					break
 				}
+				// C.td_send(
+				// 	clientId,
+				// 	C.CString(
+				// 		fmt.Sprintf(
+				// 			`{
+				// 				"@type": "getMessageAvailableReactions",
+				// 				"chat_id": %d,
+				// 				"message_id": %d,
+				// 				"row_size": 25
+				// 			}`,
+				// 			msgsResp.Msgs[0].ChatId,
+				// 			msgsResp.Msgs[0].Id,
+				// 		),
+				// 	),
+				// )
 				if len(msgsResp.Msgs) > 1 {
 					messages <- msgsResp.Msgs
 				}
@@ -365,8 +484,9 @@ func main() {
 					if err := json.Unmarshal(res, &msgResp); err != nil {
 						fmt.Println("Ошибка преобразования json: ", err)
 					}
-					if selectedChat == msgResp.ChatId {
-						newMessage <- LastMsgResp{
+					hostel.checkReacted(msgResp.ChatId)
+					if selectedChat == msgResp.LastMsg.ChatId {
+						hostel.newMessage <- LastMsgResp{
 							ChatId:  selectedChat,
 							LastMsg: msgResp.LastMsg,
 						}
@@ -391,8 +511,11 @@ func main() {
 							selectedChat = chatId
 						},
 						messages,
+						reactionChan,
+						doneChan,
+						hostel,
 					)
-					go reactNewMessage(int(clientId), newMessage)
+					go reactNewMessage(int(clientId), newMessage, hostel)
 				} else {
 					if err := nextStep(
 						int(clientId),
@@ -405,12 +528,27 @@ func main() {
 			}
 
 			if resData.Type == "error" {
-				var errResp ErrorResp
-				if err := json.Unmarshal(res, &errResp); err != nil {
-					fmt.Println("Ошибка преобразования json: ", err)
-					break
-				}
-				fmt.Println(errResp.Msg)
+				go func() {
+					var errResp ErrorResp
+					if err := json.Unmarshal(res, &errResp); err != nil {
+						fmt.Println("Ошибка парсинга ошибки: ", err)
+					}
+					messages <- []Message{}
+					isDone := <-doneChan
+					if isDone {
+						go reactMessages(
+							int(clientId),
+							func(chatId int64) {
+								selectedChat = chatId
+							},
+							messages,
+							reactionChan,
+							doneChan,
+							hostel,
+						)
+						fmt.Println(errResp.Msg)
+					}
+				}()
 			}
 		}
 	}

@@ -5,27 +5,25 @@ package main
 import "C"
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/genai"
 )
 
-type AuthState struct {
+type CommonResp struct {
 	Type string `json:"@type"`
 }
 
 type AuthResp struct {
-	State AuthState `json:"authorization_state"`
-}
-
-type CommonResp struct {
-	Type string `json:"@type"`
+	State CommonResp `json:"authorization_state"`
 }
 
 type ErrorResp struct {
@@ -33,8 +31,9 @@ type ErrorResp struct {
 }
 
 type Message struct {
-	Id     int64 `json:"id"`
-	ChatId int64 `json:"chat_id"`
+	Id      int64      `json:"id"`
+	ChatId  int64      `json:"chat_id"`
+	Content CommonResp `json:"content"`
 }
 
 type LastMsgResp struct {
@@ -180,13 +179,9 @@ func sendReaction(
 }
 
 // raw
-type CommonReactType struct {
-	Type string `json:"@type"`
-}
-
 type CommonReaction struct {
-	Type   CommonReactType `json:"type"`
-	ForVIP bool            `json:"needs_premium"`
+	Type   CommonResp `json:"type"`
+	ForVIP bool       `json:"needs_premium"`
 }
 
 type CommonReactions struct {
@@ -221,6 +216,8 @@ func reactMessages(
 	messages chan []Message,
 	reactChan chan ReactionsResp,
 	hostel *Hostel,
+	client *genai.Client,
+	ctx context.Context,
 ) {
 	hostel.mutex.Lock()
 	defer hostel.mutex.Unlock()
@@ -289,18 +286,38 @@ func reactMessages(
 	}
 	msgs := <-messages
 	reactions := *hostel.reactions
+	text := "bro i so tired, tomorrow ok?"
 	for _, msg := range msgs {
-		var emoji string
-		if len(reactions) < 1 {
-			emoji = "👍"
-		} else {
-			emoji = reactions[rand.Intn(len(reactions))]
-		}
 		if _, ok := hostel.reactedMsgs[msg.ChatId]; !ok {
 			hostel.reactedMsgs[msg.ChatId] = false
 		}
 		if !hostel.reactedMsgs[msg.Id] {
-			sendReaction(clientId, chatId, msg.Id, emoji, "reactions")
+			parts := []*genai.Part{
+				{
+					Text: fmt.Sprintf(`
+						You will be given a list of emojis and a text. Your task is to select the most fitting emoji from the provided list based on the meaning or mood of the text.
+
+						Rules:
+						- You MUST only return an emoji that exists in the provided list
+						- Return ONLY the emoji itself, nothing else — no words, no punctuation, no explanation
+						- The response must be a single emoji character
+
+						List of emojis:
+						%s
+
+						Text:
+						%s
+					`,
+						strings.Join(reactions, ", "),
+						text,
+					),
+				},
+			}
+			result, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", []*genai.Content{{Parts: parts}}, nil)
+			if err != nil {
+				fmt.Println("Ошибка получения результата от AI: ", err)
+			}
+			sendReaction(clientId, chatId, msg.Id, result.Text(), "reactions")
 			hostel.reactedMsgs[msg.Id] = true
 		}
 	}
@@ -310,25 +327,48 @@ func reactNewMessage(
 	clientId int,
 	msgChan chan LastMsgResp,
 	hostel *Hostel,
+	client *genai.Client,
+	ctx context.Context,
 ) {
 	var (
 		reactions []string
-		emoji     string
+		text      string
 	)
+	text = "ohh, yeah i think"
 	for {
 		message := <-msgChan
 		hostel.mutex.Lock()
-		reactions = *hostel.reactions
-		if len(reactions) < 1 {
-			emoji = "👍"
-		} else {
-			emoji = reactions[rand.Intn(len(reactions))]
-		}
 		if _, ok := hostel.reactedMsgs[message.LastMsg.Id]; !ok {
 			hostel.reactedMsgs[message.LastMsg.Id] = false
 		}
 		if !hostel.reactedMsgs[message.LastMsg.Id] {
-			sendReaction(clientId, message.ChatId, message.LastMsg.Id, emoji, "reaction")
+			reactions = *hostel.reactions
+			parts := []*genai.Part{
+				{
+					Text: fmt.Sprintf(`
+						You will be given a list of emojis and a text. Your task is to select the most fitting emoji from the provided list based on the meaning or mood of the text.
+
+						Rules:
+						- You MUST only return an emoji that exists in the provided list
+						- Return ONLY the emoji itself, nothing else — no words, no punctuation, no explanation
+						- The response must be a single emoji character
+
+						List of emojis:
+						%s
+
+						Text:
+						%s
+					`,
+						strings.Join(reactions, ","),
+						text,
+					),
+				},
+			}
+			result, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", []*genai.Content{{Parts: parts}}, nil)
+			if err != nil {
+				fmt.Println("Ошибка получения результата от AI: ", err)
+			}
+			sendReaction(clientId, message.ChatId, message.LastMsg.Id, result.Text(), "reaction")
 			hostel.reactedMsgs[message.LastMsg.Id] = true
 		}
 		hostel.mutex.Unlock()
@@ -355,6 +395,14 @@ func registerHostel() *Hostel {
 
 func main() {
 	hostel := registerHostel()
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  os.Getenv("API_KEY"),
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		panic(fmt.Sprint("Ошибка создания AI client: ", err))
+	}
 	messages := make(chan []Message)
 	newMessage := make(chan LastMsgResp)
 	reactionChan := make(chan ReactionsResp)
@@ -539,8 +587,10 @@ func main() {
 						messages,
 						reactionChan,
 						hostel,
+						client,
+						ctx,
 					)
-					go reactNewMessage(int(clientId), newMessage, hostel)
+					go reactNewMessage(int(clientId), newMessage, hostel, client, ctx)
 				} else {
 					if err := nextStep(
 						int(clientId),

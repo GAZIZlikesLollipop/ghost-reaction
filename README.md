@@ -88,6 +88,7 @@ ghost-reaction/
 export CC=/usr/bin/gcc          # путь к C компилятору
 export APP_ID="ваш_app_id"
 export APP_HASH="ваш_app_hash"
+export API_KEY="ваш_gemini_api_key"
 ```
 
 ### 7. Запустите

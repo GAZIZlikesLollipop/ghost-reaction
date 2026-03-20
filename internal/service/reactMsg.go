@@ -22,6 +22,7 @@ func ReactMessages(
 	hostel *model.Hostel,
 	client *genai.Client,
 	ctx context.Context,
+	fileChan chan model.TdFile,
 ) {
 	hostel.Mutex.Lock()
 	defer hostel.Mutex.Unlock()
@@ -80,17 +81,25 @@ func ReactMessages(
 		if !hostel.ReactedMsgs[msg.Id] {
 			parts := []*genai.Part{{
 				Text: fmt.Sprintf(`
-					You will be given a list of emojis and a text. Your task is to select the most fitting emoji from the provided list based on the meaning or mood of the text.
+					You are reacting to a message in a chat, exactly like a real person would — choosing the single most fitting emoji reaction.
 
-					Rules:
-					- You MUST only return an emoji that exists in the provided list
-					- Return ONLY the emoji itself, nothing else — no words, no punctuation, no explanation
-					- The response must be a single emoji character
+					You will receive:
+					1. A list of available reaction emojis
+					2. A message to react to — this could be text, an image, a video thumbnail, a sticker, a voice message description, a document, or any other type of content. If media is attached, it will be provided directly.
 
-					List of emojis:
+					Look at EVERYTHING provided — read the text, look at the image, understand the vibe — then pick your reaction.
+
+					Your job: choose the ONE emoji from the list that best fits your reaction — emotionally, visually, or contextually.
+
+					Strict rules:
+					- Output ONLY a single emoji character — nothing else
+					- The emoji MUST come from the provided list — never use emojis outside of it
+					- No words, no punctuation, no explanation, no line breaks — just the emoji
+
+					Available reactions:
 					%s
 
-					Text:
+					Message / Content to react to:
 					%s
 				`, strings.Join(reactions, ", "), text),
 			}}
@@ -110,36 +119,27 @@ func ReactNewMessage(
 	hostel *model.Hostel,
 	client *genai.Client,
 	ctx context.Context,
+	fileChan chan model.TdFile,
 ) {
 	var (
 		reactions []string
-		text      string
+		parts     []*genai.Part
 	)
-	text = "ohh, yeah i think"
 	for {
 		message := <-msgChan
+		parts = []*genai.Part{}
 		hostel.Mutex.Lock()
 		if _, ok := hostel.ReactedMsgs[message.LastMsg.Id]; !ok {
 			hostel.ReactedMsgs[message.LastMsg.Id] = false
 		}
 		if !hostel.ReactedMsgs[message.LastMsg.Id] {
 			reactions = *hostel.Reactions
-			parts := []*genai.Part{{
-				Text: fmt.Sprintf(`
-					You will be given a list of emojis and a text. Your task is to select the most fitting emoji from the provided list based on the meaning or mood of the text.
-
-					Rules:
-					- You MUST only return an emoji that exists in the provided list
-					- Return ONLY the emoji itself, nothing else — no words, no punctuation, no explanation
-					- The response must be a single emoji character
-
-					List of emojis:
-					%s
-
-					Text:
-					%s
-				`, strings.Join(reactions, ","), text),
-			}}
+			switch v := message.LastMsg.Content.(type) {
+			case model.MessageText:
+				parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Formatted.Text)})
+			case model.MessagePhoto:
+				parts = append(parts, &genai.Part{})
+			}
 			result, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", []*genai.Content{{Parts: parts}}, nil)
 			if err != nil {
 				fmt.Println("Ошибка получения результата от AI: ", err)

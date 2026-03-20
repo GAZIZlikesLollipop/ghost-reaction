@@ -99,6 +99,7 @@ func InitApp() model.State {
 		MsgsChan:     make(chan []model.Message),
 		MsgChan:      make(chan model.LastMsgResp),
 		ReactsChan:   make(chan model.ReactionsResp),
+		FileChan:     make(chan model.TdFile),
 		AuthState:    "authorizationStateWaitTdlibParameters",
 		Limit:        0,
 		SelectedChat: 0,

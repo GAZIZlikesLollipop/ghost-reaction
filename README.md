@@ -94,7 +94,7 @@ export API_KEY="ваш_gemini_api_key"
 ### 7. Запустите
 
 ```bash
-go run main.go
+go run cmd/main.go
 ```
 
 ---

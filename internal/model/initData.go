@@ -20,6 +20,7 @@ type State struct {
 	MsgsChan     chan []Message
 	MsgChan      chan LastMsgResp
 	ReactsChan   chan ReactionsResp
+	FileChan     chan TdFile
 	AuthState    string
 	Limit        uint64
 	SelectedChat int64

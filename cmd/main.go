@@ -36,6 +36,17 @@ func main() {
 			}
 		}
 
+		if resData.Type == "file" {
+			go func() {
+				var fileResp model.TdFile
+				if err := json.Unmarshal(res, &fileResp); err != nil {
+					fmt.Println("Ошибка преобразования file: ", err)
+					return
+				}
+				state.FileChan <- fileResp
+			}()
+		}
+
 		if resData.Type == "availableReactions" {
 			go func() {
 				var reactResp model.CommonReactions
@@ -51,20 +62,22 @@ func main() {
 		}
 
 		if resData.Type == "messages" {
-			var msgsResp model.MsgsResp
-			if err := json.Unmarshal(res, &msgsResp); err != nil {
-				fmt.Println("Ошибка преобразования json: ", err)
-				break
-			}
-			tdlib.Send(state.ClientId, fmt.Sprintf(`{
-				"@type": "getMessageAvailableReactions",
-				"chat_id": %d,
-				"message_id": %d,
-				"row_size": 25
-			}`, msgsResp.Msgs[0].ChatId, msgsResp.Msgs[0].Id))
-			if len(msgsResp.Msgs) >= int(state.Limit) {
-				state.MsgsChan <- msgsResp.Msgs
-			}
+			go func() {
+				var msgsResp model.MsgsResp
+				if err := json.Unmarshal(res, &msgsResp); err != nil {
+					fmt.Println("Ошибка преобразования json: ", err)
+					return
+				}
+				tdlib.Send(state.ClientId, fmt.Sprintf(`{
+					"@type": "getMessageAvailableReactions",
+					"chat_id": %d,
+					"message_id": %d,
+					"row_size": 25
+				}`, msgsResp.Msgs[0].ChatId, msgsResp.Msgs[0].Id))
+				if len(msgsResp.Msgs) >= int(state.Limit) {
+					state.MsgsChan <- msgsResp.Msgs
+				}
+			}()
 		}
 
 		if resData.Type == "updateChatLastMessage" {
@@ -107,8 +120,9 @@ func main() {
 					state.Hostel,
 					state.Client,
 					state.Ctx,
+					state.FileChan,
 				)
-				go service.ReactNewMessage(state.ClientId, state.MsgChan, state.Hostel, state.Client, state.Ctx)
+				go service.ReactNewMessage(state.ClientId, state.MsgChan, state.Hostel, state.Client, state.Ctx, state.FileChan)
 			} else {
 				if err := service.NextStep(state.ClientId, state.AuthState); err != nil {
 					fmt.Println("Ошибка перехода на следующий шаг: ", err)

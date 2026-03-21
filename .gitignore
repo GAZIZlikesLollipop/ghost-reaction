@@ -3,4 +3,4 @@ tdlib.log.old
 tdlib-db/
 tdlib-files/
 lib/
-include/
+internal/tdlib/include/

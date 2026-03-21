@@ -15,10 +15,7 @@ type MessageText struct {
 func (m MessageText) messageType() {}
 
 type LocalFile struct {
-	Path          string `json:"path"`
-	CanDownload   bool   `json:"can_be_downloaded"`
-	IsDownloading bool   `json:"is_downloading_active"`
-	IsDownloaded  bool   `json:"is_downloading_completed"`
+	Path string `json:"path"`
 }
 
 type TdFile struct {
@@ -61,7 +58,6 @@ type TdVideo struct {
 
 type MessageVideo struct {
 	Caption FormattedText `json:"caption"`
-	Cover   *Photo        `json:"cover"`
 	Video   TdVideo       `json:"video"`
 }
 

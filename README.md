@@ -44,10 +44,10 @@ cd ghost-reaction
 
 ### 3. Подготовьте директории
 
-Создайте папки `lib` и `include` в корне проекта:
+Создайте директории `lib` корне проекта и `include` в `internal/tdlib`:
 
 ```bash
-mkdir -p include/td lib
+mkdir -p internal/tdlib/include/td lib
 ```
 
 ### 4. Перенесите файлы библиотеки
@@ -63,24 +63,10 @@ cp -r td/build/td/telegram include/td
 cp td/build/libtdjson.so lib/   # или .dylib на macOS
 ```
 
-После этого структура проекта должна выглядеть так:
-
-```
-ghost-reaction/
-├── include/
-│   ├── td_json_client.h
-│   └── td/
-│       └── telegram/
-│           └── tdjson_export.h            
-├── lib/
-│   └── libtdjson.so
-├── main.go
-└── README.md
-```
-
 ### 5. Получите Telegram API credentials
 
 Зарегистрируйте приложение на [my.telegram.org/apps](https://my.telegram.org/apps) и получите `app_id` и `app_hash`.
+И получите api key на [сайте](https://aistudio.google.com/app/api-keys)
 
 ### 6. Задайте переменные окружения
 
@@ -102,10 +88,15 @@ go run cmd/main.go
 ## 🗂️ Структура проекта
 
 ```
-ghost-reaction/
-├── include/        # заголовочные файлы TDLib (добавляются вручную)
-├── lib/            # скомпилированная библиотека TDLib (добавляется вручную)
-├── main.go         # точка входа
+.
+├ cmd/main.go          # Точка входа
+├ internal/
+│   ├ model/           # Структуры данных (сообщения, реакции, ответы)
+│   ├ service/         # Бизнес-логика (авторизация, работа с сообщениями)
+│   └ tdlib/
+│       └ include/     # Заголовочные файлы TDLib (.h) для cgo
+├ lib/                 # Скомпилированные бинарники TDLib (.so / .a)
+└ go.mod
 └── README.md
 ```
 

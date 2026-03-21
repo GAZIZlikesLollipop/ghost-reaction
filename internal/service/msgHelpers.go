@@ -1,14 +1,24 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"td/internal/model"
 	"td/internal/tdlib"
+
+	"google.golang.org/genai"
 )
 
-func SendReaction(clientId int, chatId int64, msgId int64, emoji string, extra string) {
+func SendReaction(
+	clientId int,
+	chatId int64,
+	msgId int64,
+	emoji string,
+	extra string,
+) {
 	tdlib.Send(clientId, fmt.Sprintf(`{
 		"@type": "addMessageReaction",
 		"chat_id": %d,
@@ -23,11 +33,10 @@ func SendReaction(clientId int, chatId int64, msgId int64, emoji string, extra s
 	}`, chatId, msgId, emoji, extra))
 }
 
-func PrepareAndSendReaction() {}
-
 func StartDownload(
 	ClientId int,
 	FileId int32,
+	Limit int64,
 ) {
 	tdlib.Send(
 		ClientId,
@@ -36,10 +45,87 @@ func StartDownload(
 			"file_id": %d,
 			"priority": 1,
 			"offset": 0,
-			"limit": 0,
+			"limit": %d,
 			"synchronous": true
-		}`, FileId),
+		}`, FileId, Limit),
 	)
+}
+
+func PrepareAndSendReaction(
+	clientId int,
+	hostel *model.Hostel,
+	message model.LastMsgResp,
+	fileChan chan model.TdFile,
+	client *genai.Client,
+	ctx context.Context,
+	isCustom bool,
+) {
+	var (
+		parts     []*genai.Part
+		reactions []string
+	)
+	if !isCustom {
+		hostel.Mutex.Lock()
+		defer hostel.Mutex.Unlock()
+	}
+	if _, ok := hostel.ReactedMsgs[message.LastMsg.Id]; !ok {
+		hostel.ReactedMsgs[message.LastMsg.Id] = false
+	}
+	if !hostel.ReactedMsgs[message.LastMsg.Id] {
+		reactions = *hostel.Reactions
+		switch v := message.LastMsg.Content.(type) {
+		case model.MessageText:
+			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Formatted.Text)})
+		case model.MessagePhoto:
+			for _, size := range v.PhotoInfo.PhotoSizes {
+				if size.Type == "x" {
+					StartDownload(clientId, size.File.Id, 0)
+				}
+			}
+			file := <-fileChan
+			data, err := os.ReadFile(file.Local.Path)
+			if err != nil {
+				fmt.Println("Ошибка чтения файла фотографии: ", err)
+				return
+			}
+			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
+			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
+				Data: data,
+			}})
+		case model.MessageDocument:
+			StartDownload(clientId, v.Document.File.Id, 0)
+			file := <-fileChan
+			data, err := os.ReadFile(file.Local.Path)
+			if err != nil {
+				fmt.Println("Ошибка чтения документа: ", err)
+				return
+			}
+			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
+			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
+				Data:        data,
+				DisplayName: v.Document.FileName,
+				MIMEType:    v.Document.MimeType,
+			}})
+		case model.MessageVideo:
+			StartDownload(clientId, v.Video.Video.Id, 103809024)
+			file := <-fileChan
+			data, err := os.ReadFile(file.Local.Path)
+			if err != nil {
+				fmt.Println("Ошибка чтения файла видео: ", err)
+				return
+			}
+			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
+			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
+				Data: data,
+			}})
+		}
+		result, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", []*genai.Content{{Parts: parts}}, nil)
+		if err != nil {
+			fmt.Println("Ошибка получения результата от AI: ", err)
+		}
+		SendReaction(clientId, message.ChatId, message.LastMsg.Id, result.Text(), "reaction")
+		hostel.ReactedMsgs[message.LastMsg.Id] = true
+	}
 }
 
 type MessageWrapper struct {

@@ -85,6 +85,7 @@ func main() {
 				var msgResp model.LastMsgResp
 				if err := json.Unmarshal(res, &msgResp); err != nil {
 					fmt.Println("Ошибка преобразования json: ", err)
+					return
 				}
 				if state.SelectedChat == msgResp.LastMsg.ChatId {
 					state.MsgChan <- model.LastMsgResp{
@@ -135,6 +136,7 @@ func main() {
 			var errResp model.ErrorResp
 			if err := json.Unmarshal(res, &errResp); err != nil {
 				fmt.Println("Ошибка парсинга ошибки: ", err)
+				break
 			}
 			fmt.Println(errResp.Msg)
 			break

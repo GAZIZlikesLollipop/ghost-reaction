@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -122,40 +121,11 @@ func PrepareAndSendReaction(
 		result, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", []*genai.Content{{Parts: parts}}, nil)
 		if err != nil {
 			fmt.Println("Ошибка получения результата от AI: ", err)
+			return
 		}
 		SendReaction(clientId, message.ChatId, message.LastMsg.Id, result.Text(), "reaction")
 		hostel.ReactedMsgs[message.LastMsg.Id] = true
 	}
-}
-
-type MessageWrapper struct {
-	Content model.MessageContent
-}
-
-func (r *MessageWrapper) UnmarshalJSON(data []byte) error {
-	var msg model.CommonResp
-	if err := json.Unmarshal(data, &msg); err != nil {
-		return err
-	}
-	switch msg.Type {
-	case "messageText":
-		var msgText model.MessageText
-		json.Unmarshal(data, &msgText)
-		r.Content = msgText
-	case "messagePhoto":
-		var msgPhoto model.MessagePhoto
-		json.Unmarshal(data, &msgPhoto)
-		r.Content = msgPhoto
-	case "messageDocument":
-		var msgDoc model.MessageDocument
-		json.Unmarshal(data, &msgDoc)
-		r.Content = msgDoc
-	case "messageVideo":
-		var msgVideo model.MessageVideo
-		json.Unmarshal(data, &msgVideo)
-		r.Content = msgVideo
-	}
-	return nil
 }
 
 func GetPrompt(

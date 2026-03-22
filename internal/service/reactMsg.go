@@ -30,7 +30,7 @@ func ReactMessages(
 	var chatIdStr string
 	fmt.Print("Введите id чата у которого хотите поставить реакции: ")
 	fmt.Scan(&chatIdStr)
-	re := regexp.MustCompile(`[0-9]`)
+	re := regexp.MustCompile(`-?[0-9]`)
 	chatId, _ := strconv.ParseInt(strings.Join(re.FindAllString(chatIdStr, -1), ""), 10, 64)
 
 	var limitStr string
@@ -49,8 +49,10 @@ func ReactMessages(
 		"only_local": false
 	}`, chatId, limit)
 	tdlib.Send(clientId, getChatHistory)
-	time.Sleep(1 * time.Second)
-	tdlib.Send(clientId, getChatHistory)
+	if limit > 1 {
+		time.Sleep(1 * time.Second)
+		tdlib.Send(clientId, getChatHistory)
+	}
 
 	reactResp := <-reactChan
 	var rawReactions []model.CommonReaction

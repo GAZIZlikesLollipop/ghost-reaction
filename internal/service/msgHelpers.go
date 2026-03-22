@@ -3,10 +3,15 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
+	"mime"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"td/internal/model"
 	"td/internal/tdlib"
+	"time"
 
 	"google.golang.org/genai"
 )
@@ -30,6 +35,13 @@ func SendReaction(
 		"update_recent_reactions": false,
 		"@extra": "%s"
 	}`, chatId, msgId, emoji, extra))
+	strDelay := strings.TrimSpace(os.Getenv("REQUEST_DELAY"))
+	delay, err := strconv.Atoi(strDelay)
+	if err != nil {
+		time.Sleep(10 * time.Second)
+	} else {
+		time.Sleep(time.Duration(delay) * time.Second)
+	}
 }
 
 func StartDownload(
@@ -73,13 +85,22 @@ func PrepareAndSendReaction(
 	if !hostel.ReactedMsgs[message.LastMsg.Id] {
 		reactions = *hostel.Reactions
 		switch v := message.LastMsg.Content.(type) {
-		case model.MessageText:
+		case model.MsgCntText:
 			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Formatted.Text)})
-		case model.MessagePhoto:
+		case model.MsgCntPhoto:
+			hasX := false
+			if len(v.PhotoInfo.PhotoSizes) < 1 {
+				fmt.Println("Invalid photo!")
+				return
+			}
 			for _, size := range v.PhotoInfo.PhotoSizes {
 				if size.Type == "x" {
-					StartDownload(clientId, size.File.Id, 0)
+					hasX = true
+					StartDownload(clientId, size.File.Id, 103809024)
 				}
+			}
+			if !hasX {
+				StartDownload(clientId, v.PhotoInfo.PhotoSizes[0].File.Id, 103809024)
 			}
 			file := <-fileChan
 			data, err := os.ReadFile(file.Local.Path)
@@ -89,38 +110,46 @@ func PrepareAndSendReaction(
 			}
 			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
 			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
-				Data: data,
+				Data:     data,
+				MIMEType: "image/jpeg",
 			}})
-		case model.MessageDocument:
-			StartDownload(clientId, v.Document.File.Id, 0)
-			file := <-fileChan
-			data, err := os.ReadFile(file.Local.Path)
+		case model.MsgCntDoc:
+			StartDownload(clientId, v.Document.File.Id, 103809024)
+			document := <-fileChan
+			data, err := os.ReadFile(document.Local.Path)
+			if err != nil {
+				fmt.Println("Ошибка чтения файла: ", err)
+				return
+			}
+			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
+			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
+				Data:     data,
+				MIMEType: "text/plain",
+			}})
+		case model.MsgCntVideo:
+			StartDownload(clientId, v.Video.Video.Id, 20971520)
+			video := <-fileChan
+			file, err := os.Open(video.Local.Path)
 			if err != nil {
 				fmt.Println("Ошибка чтения документа: ", err)
 				return
 			}
-			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
-			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
-				Data:        data,
-				DisplayName: v.Document.FileName,
-				MIMEType:    v.Document.MimeType,
-			}})
-		case model.MessageVideo:
-			StartDownload(clientId, v.Video.Video.Id, 103809024)
-			file := <-fileChan
-			data, err := os.ReadFile(file.Local.Path)
+			data, err := io.ReadAll(file)
 			if err != nil {
-				fmt.Println("Ошибка чтения файла видео: ", err)
+				fmt.Println("Ошибка чтения файла: ", err)
 				return
 			}
+			mimeType := mime.TypeByExtension(filepath.Ext(file.Name()))
 			parts = append(parts, &genai.Part{Text: GetPrompt(reactions, v.Caption.Text)})
 			parts = append(parts, &genai.Part{InlineData: &genai.Blob{
-				Data: data,
+				Data:     data,
+				MIMEType: fmt.Sprintf("%s/%s", mimeType[:strings.Index(mimeType, "/")], mimeType[strings.Index(mimeType, "/")+1:]),
 			}})
 		}
-		result, err := client.Models.GenerateContent(ctx, "gemini-2.5-flash", []*genai.Content{{Parts: parts}}, nil)
+		result, err := client.Models.GenerateContent(ctx, os.Getenv("AI_MODEL"), []*genai.Content{{Parts: parts}}, nil)
 		if err != nil {
 			fmt.Println("Ошибка получения результата от AI: ", err)
+			time.Sleep(1 * time.Second)
 			return
 		}
 		SendReaction(clientId, message.ChatId, message.LastMsg.Id, result.Text(), "reaction")

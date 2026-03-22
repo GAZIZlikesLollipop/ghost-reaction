@@ -63,18 +63,19 @@ cp -r td/build/td/telegram include/td
 cp td/build/libtdjson.so lib/   # или .dylib на macOS
 ```
 
-### 5. Получите Telegram API credentials
+### 5. Получите Telegram и Gemini API credentials
 
 Зарегистрируйте приложение на [my.telegram.org/apps](https://my.telegram.org/apps) и получите `app_id` и `app_hash`.
-И получите api key на [сайте](https://aistudio.google.com/app/api-keys)
+Далее получите API key на [сайте](https://aistudio.google.com/app/api-keys).
 
 ### 6. Задайте переменные окружения
 
 ```bash
-export CC=/usr/bin/gcc          # путь к C компилятору
 export APP_ID="ваш_app_id"
 export APP_HASH="ваш_app_hash"
 export API_KEY="ваш_gemini_api_key"
+export AI_MODEL="модель_гемини" # например gemini-2.5-flash-lite
+export REQUEST_DELAY="задержка_между_запросами_в_секундах" # опционально (по умолчанию 10с)
 ```
 
 ### 7. Запустите
@@ -109,7 +110,7 @@ go run cmd/main.go
 | `cannot find -ltdjson` | Убедитесь что `libtdjson.so` лежит в `lib/` |
 | `td_json_client.h: No such file` | Проверьте путь `include/td_json_client.h` |
 | Ошибка авторизации | Проверьте правильность `APP_ID` и `APP_HASH` |
-| `CGO_ENABLED` ошибка | CGo включён по умолчанию, убедитесь что GCC установлен |
+| `CGO_ENABLED` ошибка | CGo включён по умолчанию, убедитесь что GCC установлен и переменная CC указывает на путь к компилятору C |
 
 ---
 

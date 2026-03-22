@@ -31,7 +31,7 @@ func main() {
 				case "reactions":
 					fmt.Println("Реакция успешно отправлена!")
 				case "reaction":
-					fmt.Println("Отправлена реакция на новое сообщение!")
+					fmt.Printf("(%v) Отправлена реакция на новое сообщение!\n", time.Now().Format("2006.01.02 15:04:05"))
 				}
 			}
 		}

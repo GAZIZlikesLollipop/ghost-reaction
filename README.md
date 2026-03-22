@@ -2,8 +2,8 @@
 
 > Бот на Go + CGo, который автоматически ставит реакции на каждое сообщение в Telegram-чате. Реакцию выбирает AI.
 
-[![Go](https://img.shields.io/badge/Go-CGo-00ADD8?logo=go)](https://golang.org)
-[![TDLib](https://img.shields.io/badge/TDLib-official-blue)](https://github.com/tdlib/td)
+[![Go](https://img.shields.io/badge/Go-1.20+-00ADD8?logo=go)](https://golang.org)
+[![TDLib](https://img.shields.io/badge/TDLib-1.8.62-blue)](https://github.com/tdlib/td)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 ---
@@ -27,6 +27,41 @@ sudo apt install build-essential cmake libssl-dev zlib1g-dev gperf
 
 ---
 
+## 🗂️ Структура проекта
+
+```
+.
+├── cmd/
+│   └── main.go                  # Точка входа
+├── internal/
+│   ├── model/                   # Структуры данных
+│   │   ├── commonResp.go
+│   │   ├── initData.go
+│   │   ├── msgResp.go
+│   │   ├── msgType.go
+│   │   └── reactionResp.go
+│   ├── service/                 # Бизнес-логика
+│   │   ├── auth.go
+│   │   ├── init.go
+│   │   ├── msgHelpers.go
+│   │   └── reactMsg.go
+│   └── tdlib/
+│       ├── include/             # Заголовочные файлы TDLib для CGo
+│       │   ├── td/telegram/
+│       │   │   ├── GitCommitHash.cpp
+│       │   │   └── tdjson_export.h
+│       │   └── td_json_client.h
+│       └── tdlib.go
+├── lib/                         # Скомпилированные библиотеки TDLib (.so / .a)
+├── go.mod
+├── go.sum
+└── LICENSE
+```
+
+> **Примечание:** директории `lib/`, `internal/tdlib/include/`, `tdlib-db/` и `tdlib-files/` добавлены в `.gitignore` — их нужно создать вручную.
+
+---
+
 ## 🚀 Установка и запуск
 
 ### 1. Клонируйте репозиторий
@@ -44,29 +79,33 @@ cd ghost-reaction
 
 ### 3. Подготовьте директории
 
-Создайте директории `lib` корне проекта и `include` в `internal/tdlib`:
-
 ```bash
-mkdir -p internal/tdlib/include/td lib
+mkdir -p internal/tdlib/include/td/telegram lib
 ```
 
-### 4. Перенесите файлы библиотеки
+### 4. Перенесите файлы TDLib
+
+После сборки TDLib скопируйте нужные файлы в проект:
 
 ```bash
-# Заголовочный файл
-cp td/td/telegram/td_json_client.h include/
+# Основной заголовочный файл
+cp td/td/telegram/td_json_client.h internal/tdlib/include/
 
 # Сгенерированные заголовки (из папки сборки)
-cp -r td/build/td/telegram include/td
+cp -r td/build/td/telegram internal/tdlib/include/td/
 
-# Скомпилированная библиотека
-cp td/build/libtdjson.so lib/   # или .dylib на macOS
+# Скомпилированные библиотеки
+cp td/build/libtdjson.so lib/                   # динамическая
+cp td/build/libtdjson.so.1.8.62 lib/
+
+# Статические библиотеки (нужны для статической линковки)
+cp td/build/lib*.a lib/
 ```
 
-### 5. Получите Telegram и Gemini API credentials
+### 5. Получите API-ключи
 
-Зарегистрируйте приложение на [my.telegram.org/apps](https://my.telegram.org/apps) и получите `app_id` и `app_hash`.
-Далее получите API key на [сайте](https://aistudio.google.com/app/api-keys).
+- **Telegram** — зарегистрируйте приложение на [my.telegram.org/apps](https://my.telegram.org/apps) и получите `app_id` и `app_hash`.
+- **Gemini** — получите API-ключ на [aistudio.google.com/app/api-keys](https://aistudio.google.com/app/api-keys).
 
 ### 6. Задайте переменные окружения
 
@@ -74,8 +113,8 @@ cp td/build/libtdjson.so lib/   # или .dylib на macOS
 export APP_ID="ваш_app_id"
 export APP_HASH="ваш_app_hash"
 export API_KEY="ваш_gemini_api_key"
-export AI_MODEL="модель_гемини" # например gemini-2.5-flash-lite
-export REQUEST_DELAY="задержка_между_запросами_в_секундах" # опционально (по умолчанию 10с)
+export AI_MODEL="gemini-2.5-flash-lite"         # или другая модель Gemini
+export REQUEST_DELAY="10"                        # задержка между запросами в секундах (по умолчанию 10)
 ```
 
 ### 7. Запустите
@@ -86,20 +125,34 @@ go run cmd/main.go
 
 ---
 
-## 🗂️ Структура проекта
+## 🔨 Сборка
 
+Перед сборкой убедитесь, что все статические `.a`-библиотеки TDLib находятся в директории `lib/`, и задайте переменную `CC`, указывающую на ваш C-компилятор.
+
+### Linux
+
+```bash
+export CC=gcc   # или clang
+
+CGO_ENABLED=1 \
+CGO_LDFLAGS="-L$(pwd)/lib -Wl,--start-group \
+  -ltdjson_static -ltdjson_private \
+  -ltdclient -ltdcore -ltdapi -ltdmtproto \
+  -ltdnet -ltddb -ltdactor -ltdutils \
+  -ltdsqlite -ltde2e \
+  -lssl -lcrypto -lc++ -lz -lm -ldl -lpthread \
+  -Wl,--end-group" \
+go build \
+  -ldflags="-linkmode external -extldflags '-static'" \
+  -o grBin \
+  cmd/main.go
 ```
-.
-├ cmd/main.go          # Точка входа
-├ internal/
-│   ├ model/           # Структуры данных (сообщения, реакции, ответы)
-│   ├ service/         # Бизнес-логика (авторизация, работа с сообщениями)
-│   └ tdlib/
-│       └ include/     # Заголовочные файлы TDLib (.h) для cgo
-├ lib/                 # Скомпилированные бинарники TDLib (.so / .a)
-└ go.mod
-└── README.md
-```
+
+> Флаги `-Wl,--start-group ... -Wl,--end-group` необходимы, так как статические библиотеки TDLib имеют циклические зависимости между собой.
+
+### Windows
+
+Переходите по следующей ссылке и скачивайте [убунту](https://ubuntu.com/download/desktop) 🫠
 
 ---
 
@@ -107,10 +160,11 @@ go run cmd/main.go
 
 | Проблема | Решение |
 |---|---|
-| `cannot find -ltdjson` | Убедитесь что `libtdjson.so` лежит в `lib/` |
-| `td_json_client.h: No such file` | Проверьте путь `include/td_json_client.h` |
+| `cannot find -ltdjson` | Убедитесь, что `libtdjson.so` / `libtdjson_static.a` находятся в `lib/` |
+| `td_json_client.h: No such file` | Проверьте путь `internal/tdlib/include/td_json_client.h` |
 | Ошибка авторизации | Проверьте правильность `APP_ID` и `APP_HASH` |
-| `CGO_ENABLED` ошибка | CGo включён по умолчанию, убедитесь что GCC установлен и переменная CC указывает на путь к компилятору C |
+| `CGO_ENABLED` ошибка | CGo включён по умолчанию; убедитесь, что GCC установлен и переменная `CC` указывает на корректный путь к компилятору |
+| Ошибка линковки `-lc++` | Установите `libc++-dev` или замените на `-lstdc++` для GCC |
 
 ---
 
